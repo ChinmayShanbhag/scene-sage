@@ -1,0 +1,13 @@
+torch
+open-clip-torch
+sentence-transformers
+faiss-cpu
+ffmpeg-python
+opencv-python
+numpy
+tqdm
+Pillow
+fastapi
+uvicorn[standard]
+python-multipart
+yt-dlp

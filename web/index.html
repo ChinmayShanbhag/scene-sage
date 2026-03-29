@@ -1,0 +1,2025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SceneSage — Frame-Aware Trailer Recommender</title>
+  <meta name="description" content="A multimodal video scene analysis system that indexes trailer frames using OpenCLIP + Sentence Transformers and enables FAISS-powered similarity search." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #111118;
+      --bg-card: #16161f;
+      --bg-card-hover: #1c1c28;
+      --accent: #6c5ce7;
+      --accent-light: #a29bfe;
+      --accent-glow: rgba(108, 92, 231, 0.3);
+      --text-primary: #eeeef0;
+      --text-secondary: #9898a6;
+      --text-muted: #5e5e6e;
+      --border: #2a2a38;
+      --border-light: #3a3a4a;
+      --gradient-1: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 50%, #74b9ff 100%);
+      --gradient-2: linear-gradient(135deg, #0a0a0f 0%, #16161f 100%);
+      --font-display: 'DM Serif Display', serif;
+      --font-body: 'Instrument Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    ::selection {
+      background: var(--accent);
+      color: white;
+    }
+
+    a {
+      color: var(--accent-light);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    a:hover { color: var(--accent); }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 2rem;
+    }
+
+    /* ─── NAV ─────────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 1rem 0;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      background: rgba(10, 10, 15, 0.7);
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.3s, background 0.3s;
+    }
+    nav.scrolled {
+      border-bottom-color: var(--border);
+      background: rgba(10, 10, 15, 0.92);
+    }
+    nav .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .nav-logo {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .nav-logo .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--gradient-1);
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+    }
+    .nav-logo .logo-icon svg {
+      width: 18px;
+      height: 18px;
+      fill: white;
+    }
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text-primary); }
+    .nav-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1.2rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 0.85rem;
+      font-weight: 500;
+      font-family: var(--font-body);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .nav-cta:hover {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .nav-cta svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .mobile-toggle {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 0.5rem;
+    }
+    .mobile-toggle svg { width: 24px; height: 24px; }
+
+    /* ─── HERO ────────────────────────────────────────── */
+    .hero {
+      position: relative;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      padding-top: 5rem;
+      overflow: hidden;
+    }
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+    .hero-bg .grid-overlay {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 60px 60px;
+      opacity: 0.15;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 30%, transparent 80%);
+      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 30%, transparent 80%);
+    }
+    .hero-bg .glow {
+      position: absolute;
+      width: 700px;
+      height: 700px;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.12;
+    }
+    .hero-bg .glow-1 {
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent);
+    }
+    .hero-bg .glow-2 {
+      bottom: -300px;
+      right: -200px;
+      background: #74b9ff;
+      opacity: 0.06;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      max-width: 850px;
+      margin: 0 auto;
+    }
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1rem;
+      background: rgba(108, 92, 231, 0.1);
+      border: 1px solid rgba(108, 92, 231, 0.25);
+      border-radius: 100px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      margin-bottom: 2rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .hero-badge .dot {
+      width: 6px;
+      height: 6px;
+      background: var(--accent-light);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(3rem, 7vw, 5.5rem);
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      margin-bottom: 1.5rem;
+    }
+    .hero h1 .gradient-text {
+      background: var(--gradient-1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p {
+      font-size: 1.2rem;
+      color: var(--text-secondary);
+      max-width: 620px;
+      margin: 0 auto 2.5rem;
+      line-height: 1.7;
+    }
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.85rem 1.8rem;
+      border-radius: 10px;
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.25s var(--ease-out-expo);
+      border: none;
+    }
+    .btn svg { width: 18px; height: 18px; }
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 4px 24px var(--accent-glow);
+    }
+    .btn-primary:hover {
+      background: #7c6cf7;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(108, 92, 231, 0.4);
+      color: white;
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover {
+      border-color: var(--border-light);
+      background: var(--bg-card);
+      color: var(--text-primary);
+    }
+
+    .hero-stats {
+      display: flex;
+      justify-content: center;
+      gap: 3rem;
+      margin-top: 4rem;
+      padding-top: 3rem;
+      border-top: 1px solid var(--border);
+    }
+    .hero-stat {
+      text-align: center;
+    }
+    .hero-stat .number {
+      font-family: var(--font-mono);
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .hero-stat .label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 0.3rem;
+    }
+
+    /* ─── SECTION COMMON ──────────────────────────────── */
+    section {
+      padding: 7rem 0;
+    }
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--accent-light);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 1rem;
+    }
+    .section-title {
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.15;
+      margin-bottom: 1rem;
+    }
+    .section-desc {
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      max-width: 600px;
+      line-height: 1.7;
+    }
+
+    /* ─── PIPELINE ────────────────────────────────────── */
+    #pipeline { background: var(--bg-secondary); }
+
+    .pipeline-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.5rem;
+      margin-top: 3.5rem;
+    }
+    .pipeline-step {
+      position: relative;
+      padding: 2rem 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      transition: all 0.35s var(--ease-out-expo);
+      overflow: hidden;
+    }
+    .pipeline-step::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--gradient-1);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .pipeline-step:hover {
+      border-color: var(--border-light);
+      background: var(--bg-card-hover);
+      transform: translateY(-4px);
+    }
+    .pipeline-step:hover::before { opacity: 1; }
+
+    .step-number {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      background: rgba(108, 92, 231, 0.12);
+      padding: 0.3rem 0.7rem;
+      border-radius: 6px;
+      display: inline-block;
+      margin-bottom: 1.2rem;
+      letter-spacing: 0.05em;
+    }
+    .step-icon {
+      width: 48px;
+      height: 48px;
+      background: rgba(108, 92, 231, 0.08);
+      border: 1px solid rgba(108, 92, 231, 0.15);
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 1.2rem;
+    }
+    .step-icon svg {
+      width: 24px;
+      height: 24px;
+      stroke: var(--accent-light);
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .pipeline-step h3 {
+      font-family: var(--font-body);
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+    }
+    .pipeline-step p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .step-tag {
+      display: inline-block;
+      margin-top: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.04);
+      padding: 0.25rem 0.6rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    /* ─── ARCHITECTURE ────────────────────────────────── */
+    .arch-diagram {
+      margin-top: 3.5rem;
+      padding: 2.5rem 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      overflow-x: auto;
+    }
+    .arch-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      flex-wrap: nowrap;
+    }
+    .arch-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 1.2rem 0.6rem;
+      min-width: 100px;
+      text-align: center;
+      flex-shrink: 1;
+    }
+    .arch-node-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+    }
+    .arch-node-icon svg {
+      width: 26px;
+      height: 26px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .arch-node-icon.purple {
+      background: rgba(108, 92, 231, 0.12);
+      border-color: rgba(108, 92, 231, 0.25);
+      color: var(--accent-light);
+    }
+    .arch-node-icon.blue {
+      background: rgba(116, 185, 255, 0.12);
+      border-color: rgba(116, 185, 255, 0.25);
+      color: #74b9ff;
+    }
+    .arch-node-icon.green {
+      background: rgba(0, 206, 209, 0.12);
+      border-color: rgba(0, 206, 209, 0.25);
+      color: #00ced1;
+    }
+    .arch-node-icon.orange {
+      background: rgba(253, 203, 110, 0.12);
+      border-color: rgba(253, 203, 110, 0.25);
+      color: #fdcb6e;
+    }
+    .arch-node-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .arch-node-sub {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+    .arch-arrow {
+      color: var(--text-muted);
+      font-size: 1.2rem;
+      flex-shrink: 0;
+      padding: 0 0.3rem;
+    }
+    .arch-arrow svg {
+      width: 32px;
+      height: 16px;
+      stroke: var(--border-light);
+      fill: none;
+      stroke-width: 1.5;
+    }
+
+    /* ─── TECH STACK ──────────────────────────────────── */
+    #tech { background: var(--bg-secondary); }
+
+    .tech-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-top: 3.5rem;
+    }
+    .tech-card {
+      padding: 1.8rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      transition: all 0.3s var(--ease-out-expo);
+    }
+    .tech-card:hover {
+      border-color: var(--border-light);
+      transform: translateY(-2px);
+    }
+    .tech-card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+    }
+    .tech-card-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 1.2rem;
+    }
+    .tech-card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+    .tech-card p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 1rem;
+    }
+    .tech-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .tech-tag {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      padding: 0.25rem 0.6rem;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+
+    /* ─── DEMO / CODE ─────────────────────────────────── */
+    .demo-section {
+      margin-top: 3.5rem;
+    }
+    .code-window {
+      background: #0d0d14;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.8rem 1.2rem;
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid var(--border);
+    }
+    .code-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .code-dot.red { background: #ff5f57; }
+    .code-dot.yellow { background: #febc2e; }
+    .code-dot.green { background: #28c840; }
+    .code-filename {
+      margin-left: 0.8rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .code-body {
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    .code-body pre {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.8;
+      color: var(--text-secondary);
+    }
+    .code-body .kw { color: #c792ea; }
+    .code-body .fn { color: #82aaff; }
+    .code-body .str { color: #c3e88d; }
+    .code-body .cm { color: #546e7a; }
+    .code-body .num { color: #f78c6c; }
+    .code-body .op { color: #89ddff; }
+    .code-body .var { color: #eeffff; }
+
+    /* ─── TRY IT DEMO ─────────────────────────────────── */
+    #try-it { background: var(--bg-secondary); }
+
+    .demo-disclaimer {
+      margin-top: 1.5rem;
+      padding: 1rem 1.2rem;
+      background: rgba(253, 203, 110, 0.06);
+      border: 1px solid rgba(253, 203, 110, 0.18);
+      border-radius: 10px;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .demo-disclaimer svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      stroke: #fdcb6e;
+      fill: none;
+      stroke-width: 2;
+      margin-top: 2px;
+    }
+
+    .demo-container {
+      margin-top: 3rem;
+    }
+
+    .input-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2rem;
+    }
+    .input-tab {
+      padding: 0.75rem 1.5rem;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .input-tab svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .input-tab:hover { color: var(--text-secondary); }
+    .input-tab.active {
+      color: var(--accent-light);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 16px;
+      padding: 3rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s var(--ease-out-expo);
+      background: rgba(108, 92, 231, 0.02);
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(108, 92, 231, 0.06);
+    }
+    .upload-zone svg {
+      width: 48px;
+      height: 48px;
+      stroke: var(--text-muted);
+      fill: none;
+      stroke-width: 1.5;
+      margin-bottom: 1rem;
+    }
+    .upload-zone h3 {
+      font-size: 1.05rem;
+      margin-bottom: 0.4rem;
+    }
+    .upload-zone p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .upload-zone .size-limit {
+      display: inline-block;
+      margin-top: 0.8rem;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.04);
+      padding: 0.25rem 0.7rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .upload-zone input { display: none; }
+
+    .youtube-input-row {
+      display: flex;
+      gap: 0.75rem;
+    }
+    .yt-input {
+      flex: 1;
+      padding: 0.85rem 1.2rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .yt-input::placeholder { color: var(--text-muted); }
+    .yt-input:focus { border-color: var(--accent); }
+    .yt-submit {
+      padding: 0.85rem 1.5rem;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .yt-submit:hover { background: #7c6cf7; }
+    .yt-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .file-preview {
+      margin-top: 1.5rem;
+      display: none;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .file-preview.visible { display: flex; }
+    .file-preview img, .file-preview video {
+      width: 120px;
+      height: 68px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .file-preview-info {
+      flex: 1;
+    }
+    .file-preview-name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+      word-break: break-all;
+    }
+    .file-preview-meta {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+    .file-preview-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .preview-btn {
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+    .preview-btn.search {
+      background: var(--accent);
+      color: white;
+    }
+    .preview-btn.search:hover { background: #7c6cf7; }
+    .preview-btn.search:disabled { opacity: 0.5; cursor: not-allowed; }
+    .preview-btn.remove {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .preview-btn.remove:hover { border-color: #ff5f57; color: #ff5f57; }
+
+    /* processing state */
+    .processing-overlay {
+      display: none;
+      margin-top: 2rem;
+      padding: 2.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      text-align: center;
+    }
+    .processing-overlay.visible { display: block; }
+    .processing-spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 1.2rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .processing-overlay h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.4rem;
+    }
+    .processing-overlay p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .processing-steps {
+      margin-top: 1.2rem;
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .proc-step {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .proc-step .check {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border);
+      display: grid;
+      place-items: center;
+      transition: all 0.3s;
+    }
+    .proc-step .check.done {
+      border-color: #28c840;
+      background: rgba(40, 200, 64, 0.15);
+    }
+    .proc-step .check.done::after {
+      content: '';
+      width: 6px;
+      height: 6px;
+      background: #28c840;
+      border-radius: 50%;
+    }
+    .proc-step .check.active {
+      border-color: var(--accent);
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    /* error state */
+    .error-msg {
+      display: none;
+      margin-top: 1.5rem;
+      padding: 1rem 1.2rem;
+      background: rgba(255, 95, 87, 0.08);
+      border: 1px solid rgba(255, 95, 87, 0.25);
+      border-radius: 10px;
+      color: #ff5f57;
+      font-size: 0.88rem;
+    }
+    .error-msg.visible { display: block; }
+
+    /* results */
+    .demo-results {
+      display: none;
+      margin-top: 2rem;
+    }
+    .demo-results.visible { display: block; }
+
+    .demo-results-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .demo-results-header h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+    .demo-results-meta {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .result-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.25rem;
+    }
+    .result-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      transition: all 0.3s var(--ease-out-expo);
+    }
+    .result-card:hover {
+      border-color: var(--border-light);
+      transform: translateY(-3px);
+    }
+    .result-card-thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      object-fit: cover;
+      display: block;
+      background: var(--bg-primary);
+    }
+    .result-card-body {
+      padding: 1rem 1.2rem;
+    }
+    .result-card-rank {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.4rem;
+    }
+    .result-card-scores {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 0.6rem;
+    }
+    .result-card-score {
+      display: flex;
+      flex-direction: column;
+    }
+    .result-card-score .val {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #00ced1;
+    }
+    .result-card-score .lbl {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .result-card-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      margin-top: 0.3rem;
+    }
+    .result-card-link svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+    }
+    .result-card-link:hover { color: var(--accent); }
+
+    .results-disclaimer {
+      margin-top: 1.5rem;
+      padding: 0.8rem 1rem;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    .metrics-bar {
+      display: flex;
+      gap: 2rem;
+      margin-top: 1.5rem;
+      padding-top: 1.2rem;
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .metric {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+    .metric .metric-value {
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .metric .metric-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    /* ─── FEATURES ────────────────────────────────────── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.5rem;
+      margin-top: 3.5rem;
+    }
+    .feature-card {
+      padding: 2rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      transition: all 0.3s var(--ease-out-expo);
+    }
+    .feature-card:hover {
+      border-color: var(--border-light);
+      transform: translateY(-2px);
+    }
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 1.2rem;
+    }
+    .feature-icon svg {
+      width: 22px;
+      height: 22px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+    .feature-card p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ─── FOOTER ──────────────────────────────────────── */
+    footer {
+      padding: 3rem 0;
+      border-top: 1px solid var(--border);
+    }
+    .footer-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .footer-left {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .footer-links {
+      display: flex;
+      gap: 1.5rem;
+    }
+    .footer-links a {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+    .footer-links a:hover { color: var(--text-primary); }
+
+    /* ─── ANIMATIONS ──────────────────────────────────── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.8s var(--ease-out-expo), transform 0.8s var(--ease-out-expo);
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .reveal-delay-1 { transition-delay: 0.1s; }
+    .reveal-delay-2 { transition-delay: 0.2s; }
+    .reveal-delay-3 { transition-delay: 0.3s; }
+    .reveal-delay-4 { transition-delay: 0.4s; }
+
+    /* ─── RESPONSIVE ──────────────────────────────────── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .mobile-toggle { display: block; }
+      .nav-links.open {
+        display: flex;
+        flex-direction: column;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border);
+        padding: 1.5rem 2rem;
+        gap: 1rem;
+      }
+      .hero-stats {
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      .arch-flow {
+        min-width: unset;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .arch-arrow { display: none; }
+      .metrics-bar { gap: 1.5rem; }
+      .youtube-input-row { flex-direction: column; }
+      .input-tab { padding: 0.6rem 1rem; font-size: 0.82rem; }
+      .file-preview { flex-direction: column; text-align: center; }
+      .file-preview-actions { justify-content: center; }
+      .result-cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ NAV ═══ -->
+  <nav id="nav">
+    <div class="container">
+      <a href="#" class="nav-logo">
+        <span class="logo-icon">
+          <svg viewBox="0 0 24 24"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        </span>
+        SceneSage
+      </a>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="#pipeline">Pipeline</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#tech">Stack</a></li>
+        <li><a href="#try-it">Try It</a></li>
+        <li><a href="#features">Features</a></li>
+      </ul>
+      <a href="https://github.com/chinmayshanbhag/scene-sage" target="_blank" rel="noopener" class="nav-cta">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ═══ HERO ═══ -->
+  <section class="hero">
+    <div class="hero-bg">
+      <div class="grid-overlay"></div>
+      <div class="glow glow-1"></div>
+      <div class="glow glow-2"></div>
+    </div>
+    <div class="container">
+      <div class="hero-content">
+        <div class="hero-badge reveal">
+          <span class="dot"></span>
+          Multimodal AI Project
+        </div>
+        <h1 class="reveal reveal-delay-1">
+          <span class="gradient-text">SceneSage</span><br />
+          Frame-Aware Trailer<br />Recommender
+        </h1>
+        <p class="reveal reveal-delay-2">
+          An end-to-end multimodal pipeline that extracts, encodes, and indexes
+          movie trailer frames using OpenCLIP and Sentence Transformers, enabling
+          lightning-fast similarity search with FAISS.
+        </p>
+        <div class="hero-actions reveal reveal-delay-3">
+          <a href="https://github.com/ChinmayShanbhag/scene-sage" target="_blank" rel="noopener" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 22v-4a4.8 4.8 0 00-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 004 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+            View Source
+          </a>
+          <a href="#pipeline" class="btn btn-ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+            Explore Pipeline
+          </a>
+        </div>
+        <div class="hero-stats reveal reveal-delay-4">
+          <div class="hero-stat">
+            <div class="number">50K+</div>
+            <div class="label">Indexed Frames</div>
+          </div>
+          <div class="hero-stat">
+            <div class="number">896</div>
+            <div class="label">Vector Dimensions</div>
+          </div>
+          <div class="hero-stat">
+            <div class="number">~5ms</div>
+            <div class="label">Search Latency</div>
+          </div>
+          <div class="hero-stat">
+            <div class="number">470+</div>
+            <div class="label">Trailers Processed</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ PIPELINE ═══ -->
+  <section id="pipeline">
+    <div class="container">
+      <div class="section-label reveal">How It Works</div>
+      <h2 class="section-title reveal reveal-delay-1">End-to-End Pipeline</h2>
+      <p class="section-desc reveal reveal-delay-2">
+        From raw YouTube trailers to a searchable multimodal index in five stages.
+      </p>
+
+      <div class="pipeline-grid">
+        <div class="pipeline-step reveal">
+          <span class="step-number">01</span>
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <h3>Ingest Trailers</h3>
+          <p>Download MP4 trailers and English subtitle files from YouTube using yt-dlp with automated batch processing.</p>
+          <span class="step-tag">yt-dlp &middot; PowerShell</span>
+        </div>
+
+        <div class="pipeline-step reveal reveal-delay-1">
+          <span class="step-number">02</span>
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+          </div>
+          <h3>Extract Frames</h3>
+          <p>Extract one frame per second from each trailer using FFmpeg, with an OpenCV fallback for robustness.</p>
+          <span class="step-tag">FFmpeg &middot; OpenCV</span>
+        </div>
+
+        <div class="pipeline-step reveal reveal-delay-2">
+          <span class="step-number">03</span>
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          </div>
+          <h3>Align Captions</h3>
+          <p>Parse SRT subtitles and match each frame to its nearest-in-time caption using temporal alignment.</p>
+          <span class="step-tag">SRT Parser &middot; Temporal Match</span>
+        </div>
+
+        <div class="pipeline-step reveal reveal-delay-3">
+          <span class="step-number">04</span>
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          </div>
+          <h3>Encode Vectors</h3>
+          <p>Encode frames with OpenCLIP (ViT-B-32) and captions with Sentence Transformers, then concatenate into 896-dim vectors.</p>
+          <span class="step-tag">OpenCLIP &middot; MiniLM</span>
+        </div>
+
+        <div class="pipeline-step reveal reveal-delay-4">
+          <span class="step-number">05</span>
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <h3>Index &amp; Search</h3>
+          <p>Build a FAISS inner-product index over L2-normalized vectors for sub-millisecond cosine similarity search.</p>
+          <span class="step-tag">FAISS &middot; Cosine Similarity</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ ARCHITECTURE ═══ -->
+  <section id="architecture">
+    <div class="container">
+      <div class="section-label reveal">System Design</div>
+      <h2 class="section-title reveal reveal-delay-1">Architecture Overview</h2>
+      <p class="section-desc reveal reveal-delay-2">
+        A multimodal encoding pipeline that fuses visual and textual signals into a unified vector space.
+      </p>
+
+      <div class="arch-diagram reveal reveal-delay-3">
+        <div class="arch-flow">
+          <div class="arch-node">
+            <div class="arch-node-icon purple">
+              <svg viewBox="0 0 24 24"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            </div>
+            <span class="arch-node-label">MP4 Trailers</span>
+            <span class="arch-node-sub">YouTube</span>
+          </div>
+
+          <div class="arch-arrow"><svg viewBox="0 0 32 16"><path d="M0 8h28M24 3l6 5-6 5"/></svg></div>
+
+          <div class="arch-node">
+            <div class="arch-node-icon blue">
+              <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2" ry="2"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+            </div>
+            <span class="arch-node-label">Frame Extraction</span>
+            <span class="arch-node-sub">1 fps &middot; FFmpeg</span>
+          </div>
+
+          <div class="arch-arrow"><svg viewBox="0 0 32 16"><path d="M0 8h28M24 3l6 5-6 5"/></svg></div>
+
+          <div class="arch-node">
+            <div class="arch-node-icon purple">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </div>
+            <span class="arch-node-label">OpenCLIP</span>
+            <span class="arch-node-sub">ViT-B-32 &middot; 512d</span>
+          </div>
+
+          <div class="arch-arrow"><svg viewBox="0 0 32 16"><path d="M0 8h28M24 3l6 5-6 5"/></svg></div>
+
+          <div class="arch-node" style="position: relative;">
+            <div class="arch-node-icon green">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <span class="arch-node-label">Concat Vectors</span>
+            <span class="arch-node-sub">512 + 384 = 896d</span>
+          </div>
+
+          <div class="arch-arrow"><svg viewBox="0 0 32 16"><path d="M0 8h28M24 3l6 5-6 5"/></svg></div>
+
+          <div class="arch-node">
+            <div class="arch-node-icon orange">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <span class="arch-node-label">FAISS Index</span>
+            <span class="arch-node-sub">IndexFlatIP</span>
+          </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+          <div class="arch-flow" style="justify-content: center;">
+            <div class="arch-node">
+              <div class="arch-node-icon blue">
+                <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+              </div>
+              <span class="arch-node-label">SRT Captions</span>
+              <span class="arch-node-sub">English subtitles</span>
+            </div>
+
+            <div class="arch-arrow"><svg viewBox="0 0 32 16"><path d="M0 8h28M24 3l6 5-6 5"/></svg></div>
+
+            <div class="arch-node">
+              <div class="arch-node-icon green">
+                <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+              </div>
+              <span class="arch-node-label">Sentence Transformers</span>
+              <span class="arch-node-sub">MiniLM-L6 &middot; 384d</span>
+            </div>
+
+            <div class="arch-arrow"><svg viewBox="0 0 32 16"><path d="M0 8h28M24 3l6 5-6 5"/></svg></div>
+
+            <div class="arch-node">
+              <div class="arch-node-icon green" style="opacity: 0.4;">
+                <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              </div>
+              <span class="arch-node-label" style="opacity: 0.5;">Concat</span>
+              <span class="arch-node-sub" style="opacity: 0.5;">joins above</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ TECH STACK ═══ -->
+  <section id="tech">
+    <div class="container">
+      <div class="section-label reveal">Technology</div>
+      <h2 class="section-title reveal reveal-delay-1">Built With</h2>
+      <p class="section-desc reveal reveal-delay-2">
+        A carefully chosen stack combining state-of-the-art vision-language models with efficient vector search.
+      </p>
+
+      <div class="tech-grid">
+        <div class="tech-card reveal">
+          <div class="tech-card-header">
+            <div class="tech-card-icon" style="background: rgba(108, 92, 231, 0.12); color: var(--accent-light);">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </div>
+            <h3>OpenCLIP</h3>
+          </div>
+          <p>Vision Transformer (ViT-B-32) pretrained on OpenAI's CLIP dataset. Encodes each frame into a 512-dimensional visual embedding.</p>
+          <div class="tech-tags">
+            <span class="tech-tag">ViT-B-32</span>
+            <span class="tech-tag">512-dim</span>
+            <span class="tech-tag">FP16</span>
+            <span class="tech-tag">CUDA</span>
+          </div>
+        </div>
+
+        <div class="tech-card reveal reveal-delay-1">
+          <div class="tech-card-header">
+            <div class="tech-card-icon" style="background: rgba(0, 206, 209, 0.12); color: #00ced1;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+            </div>
+            <h3>Sentence Transformers</h3>
+          </div>
+          <p>MiniLM-L6-v2 model encodes aligned subtitle text into 384-dimensional semantic embeddings, capturing dialogue context.</p>
+          <div class="tech-tags">
+            <span class="tech-tag">all-MiniLM-L6-v2</span>
+            <span class="tech-tag">384-dim</span>
+            <span class="tech-tag">Semantic</span>
+          </div>
+        </div>
+
+        <div class="tech-card reveal reveal-delay-2">
+          <div class="tech-card-header">
+            <div class="tech-card-icon" style="background: rgba(253, 203, 110, 0.12); color: #fdcb6e;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <h3>FAISS</h3>
+          </div>
+          <p>Facebook AI Similarity Search builds an inner-product index over L2-normalized vectors for blazing-fast cosine similarity lookups.</p>
+          <div class="tech-tags">
+            <span class="tech-tag">IndexFlatIP</span>
+            <span class="tech-tag">Cosine Sim</span>
+            <span class="tech-tag">50K+ vectors</span>
+          </div>
+        </div>
+
+        <div class="tech-card reveal reveal-delay-3">
+          <div class="tech-card-header">
+            <div class="tech-card-icon" style="background: rgba(116, 185, 255, 0.12); color: #74b9ff;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <h3>FFmpeg + OpenCV</h3>
+          </div>
+          <p>Dual extraction strategy: FFmpeg as primary (fast, accurate fps filter) with OpenCV frame-stepping as a robust fallback.</p>
+          <div class="tech-tags">
+            <span class="tech-tag">1 fps</span>
+            <span class="tech-tag">JPG output</span>
+            <span class="tech-tag">Fallback</span>
+          </div>
+        </div>
+
+        <div class="tech-card reveal reveal-delay-4">
+          <div class="tech-card-header">
+            <div class="tech-card-icon" style="background: rgba(162, 155, 254, 0.12); color: var(--accent-light);">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <h3>PyTorch</h3>
+          </div>
+          <p>GPU-accelerated tensor operations with CUDA support for efficient batch encoding of thousands of frames.</p>
+          <div class="tech-tags">
+            <span class="tech-tag">CUDA</span>
+            <span class="tech-tag">DataLoader</span>
+            <span class="tech-tag">FP16</span>
+          </div>
+        </div>
+
+        <div class="tech-card reveal">
+          <div class="tech-card-header">
+            <div class="tech-card-icon" style="background: rgba(255, 95, 87, 0.12); color: #ff5f57;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </div>
+            <h3>yt-dlp</h3>
+          </div>
+          <p>Automated YouTube trailer ingestion with subtitle extraction, format selection, and batch downloading from ID lists.</p>
+          <div class="tech-tags">
+            <span class="tech-tag">MP4</span>
+            <span class="tech-tag">SRT</span>
+            <span class="tech-tag">Batch</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ CODE DEMO ═══ -->
+  <section id="demo">
+    <div class="container">
+      <div class="section-label reveal">Under the Hood</div>
+      <h2 class="section-title reveal reveal-delay-1">Core Encoding Logic</h2>
+      <p class="section-desc reveal reveal-delay-2">
+        Each frame is encoded into a fused vision-language vector that captures both what's seen and what's said.
+      </p>
+
+      <div class="demo-section reveal reveal-delay-3">
+        <div class="code-window">
+          <div class="code-header">
+            <span class="code-dot red"></span>
+            <span class="code-dot yellow"></span>
+            <span class="code-dot green"></span>
+            <span class="code-filename">scene_sage_baseline.ipynb &mdash; encode &amp; index</span>
+          </div>
+          <div class="code-body">
+<pre><span class="cm"># Encode frames with OpenCLIP (visual) + Sentence Transformers (text)</span>
+<span class="kw">with</span> <span class="var">torch</span>.<span class="fn">no_grad</span>():
+    <span class="var">v_img</span> <span class="op">=</span> <span class="var">clip_model</span>.<span class="fn">encode_image</span>(<span class="var">imgs</span>).<span class="fn">cpu</span>().<span class="fn">numpy</span>()
+    <span class="var">v_txt</span> <span class="op">=</span> <span class="var">st_model</span>.<span class="fn">encode</span>(<span class="var">captions</span>)
+
+<span class="cm"># Concatenate: 512-dim image + 384-dim text = 896-dim multimodal</span>
+<span class="var">v_full</span> <span class="op">=</span> <span class="var">np</span>.<span class="fn">hstack</span>([<span class="var">v_img</span>, <span class="var">v_txt</span>])
+
+<span class="cm"># L2-normalize for cosine similarity via dot product</span>
+<span class="var">faiss</span>.<span class="fn">normalize_L2</span>(<span class="var">vec_mat</span>)
+
+<span class="cm"># Build FAISS inner-product index</span>
+<span class="var">index</span> <span class="op">=</span> <span class="var">faiss</span>.<span class="fn">IndexFlatIP</span>(<span class="num">896</span>)
+<span class="var">index</span>.<span class="fn">add</span>(<span class="var">vec_mat</span>)
+
+<span class="cm"># Search: find k most similar frames</span>
+<span class="var">D</span>, <span class="var">I</span> <span class="op">=</span> <span class="var">index</span>.<span class="fn">search</span>(<span class="var">query_vec</span>, <span class="var">k</span><span class="op">=</span><span class="num">50</span>)</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ TRY IT ═══ -->
+  <section id="try-it">
+    <div class="container">
+      <div class="section-label reveal">Live Demo</div>
+      <h2 class="section-title reveal reveal-delay-1">Try It Yourself</h2>
+      <p class="section-desc reveal reveal-delay-2">
+        Upload an image, a short video clip, or paste a YouTube link &mdash; SceneSage will find the most similar trailers from its index.
+      </p>
+
+      <div class="demo-disclaimer reveal reveal-delay-2">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div>
+          <strong>Experimental demo.</strong> Results are based on a limited index of ~470 movie trailers and ~50K frames.
+          Recommendations may not be highly accurate and are meant to illustrate how the pipeline works, not to serve as a production system.
+          The first search may take a moment while models load into memory.
+        </div>
+      </div>
+
+      <div class="demo-container reveal reveal-delay-3">
+        <!-- input tabs -->
+        <div class="input-tabs">
+          <button class="input-tab active" data-tab="upload-image">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Image
+          </button>
+          <button class="input-tab" data-tab="upload-video">
+            <svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+            Video
+          </button>
+          <button class="input-tab" data-tab="youtube">
+            <svg viewBox="0 0 24 24"><path d="M22.54 6.42a2.78 2.78 0 00-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 00-1.94 2A29 29 0 001 11.75a29 29 0 00.46 5.33A2.78 2.78 0 003.4 19.1c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 001.94-2 29 29 0 00.46-5.25 29 29 0 00-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02" fill="currentColor" stroke="none"/></svg>
+            YouTube URL
+          </button>
+        </div>
+
+        <!-- image upload -->
+        <div class="tab-panel active" id="panel-upload-image">
+          <div class="upload-zone" id="dropzone-image">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <h3>Drop an image here or click to browse</h3>
+            <p>JPG, PNG, or WebP</p>
+            <span class="size-limit">Max 10 MB</span>
+            <input type="file" id="file-image" accept=".jpg,.jpeg,.png,.webp,.bmp" />
+          </div>
+        </div>
+
+        <!-- video upload -->
+        <div class="tab-panel" id="panel-upload-video">
+          <div class="upload-zone" id="dropzone-video">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+            <h3>Drop a video file here or click to browse</h3>
+            <p>MP4, WebM, MKV, AVI, or MOV</p>
+            <span class="size-limit">Max 50 MB</span>
+            <input type="file" id="file-video" accept=".mp4,.webm,.mkv,.avi,.mov" />
+          </div>
+        </div>
+
+        <!-- youtube URL -->
+        <div class="tab-panel" id="panel-youtube">
+          <div class="youtube-input-row">
+            <input type="text" class="yt-input" id="yt-url" placeholder="https://www.youtube.com/watch?v=..." />
+            <button class="yt-submit" id="yt-submit">Search</button>
+          </div>
+        </div>
+
+        <!-- file preview -->
+        <div class="file-preview" id="file-preview">
+          <img id="preview-thumb" src="" alt="preview" style="display:none;" />
+          <video id="preview-video" src="" muted style="display:none;"></video>
+          <div class="file-preview-info">
+            <div class="file-preview-name" id="preview-name"></div>
+            <div class="file-preview-meta" id="preview-meta"></div>
+          </div>
+          <div class="file-preview-actions">
+            <button class="preview-btn search" id="preview-search">Search Index</button>
+            <button class="preview-btn remove" id="preview-remove">Remove</button>
+          </div>
+        </div>
+
+        <!-- processing -->
+        <div class="processing-overlay" id="processing">
+          <div class="processing-spinner"></div>
+          <h3>Searching the index&hellip;</h3>
+          <p>Encoding your input and running FAISS similarity search</p>
+          <div class="processing-steps">
+            <div class="proc-step"><span class="check active" id="step-upload"></span> Upload</div>
+            <div class="proc-step"><span class="check" id="step-encode"></span> Encode</div>
+            <div class="proc-step"><span class="check" id="step-search"></span> FAISS Search</div>
+            <div class="proc-step"><span class="check" id="step-rank"></span> Rank</div>
+          </div>
+        </div>
+
+        <!-- error -->
+        <div class="error-msg" id="error-msg"></div>
+
+        <!-- results -->
+        <div class="demo-results" id="demo-results">
+          <div class="demo-results-header">
+            <h3>Recommended Trailers</h3>
+            <span class="demo-results-meta" id="results-meta"></span>
+          </div>
+          <div class="result-cards" id="result-cards"></div>
+          <div class="results-disclaimer">
+            Results are from a limited index of ~470 trailers (~50K frames). Similarity is based on visual features only (no caption context for uploaded content).
+            Scores reflect cosine similarity in the shared embedding space &mdash; higher is more similar, but absolute values depend on content type.
+          </div>
+          <div class="metrics-bar" id="results-metrics"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FEATURES ═══ -->
+  <section id="features">
+    <div class="container">
+      <div class="section-label reveal">Capabilities</div>
+      <h2 class="section-title reveal reveal-delay-1">Key Features</h2>
+      <p class="section-desc reveal reveal-delay-2">
+        Designed for robustness, scalability, and meaningful multimodal understanding.
+      </p>
+
+      <div class="features-grid">
+        <div class="feature-card reveal">
+          <div class="feature-icon" style="background: rgba(108, 92, 231, 0.12); color: var(--accent-light);">
+            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <h3>Multimodal Fusion</h3>
+          <p>Combines visual features from OpenCLIP with semantic text embeddings from Sentence Transformers into a unified 896-dimensional representation.</p>
+        </div>
+
+        <div class="feature-card reveal reveal-delay-1">
+          <div class="feature-icon" style="background: rgba(0, 206, 209, 0.12); color: #00ced1;">
+            <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <h3>Sub-millisecond Search</h3>
+          <p>FAISS inner-product index enables near-instant cosine similarity search across 50K+ frame vectors with trailer-level deduplication.</p>
+        </div>
+
+        <div class="feature-card reveal reveal-delay-2">
+          <div class="feature-icon" style="background: rgba(253, 203, 110, 0.12); color: #fdcb6e;">
+            <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          </div>
+          <h3>Robust Extraction</h3>
+          <p>Dual-strategy frame extraction with FFmpeg as primary and OpenCV as fallback, ensuring reliable processing across video formats.</p>
+        </div>
+
+        <div class="feature-card reveal reveal-delay-3">
+          <div class="feature-icon" style="background: rgba(116, 185, 255, 0.12); color: #74b9ff;">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          </div>
+          <h3>Caption-Aware</h3>
+          <p>Temporal alignment of SRT subtitles to frames adds dialogue context, making search sensitive to both visual content and spoken words.</p>
+        </div>
+
+        <div class="feature-card reveal">
+          <div class="feature-icon" style="background: rgba(162, 155, 254, 0.12); color: var(--accent-light);">
+            <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+          </div>
+          <h3>Trailer Diversity</h3>
+          <p>Recommendation logic deduplicates at the trailer level, ensuring search results surface frames from distinct, diverse trailers.</p>
+        </div>
+
+        <div class="feature-card reveal reveal-delay-1">
+          <div class="feature-icon" style="background: rgba(255, 95, 87, 0.12); color: #ff5f57;">
+            <svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          </div>
+          <h3>Batch Processing</h3>
+          <p>GPU-accelerated batch encoding with PyTorch DataLoader processes hundreds of trailers and tens of thousands of frames efficiently.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer>
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-left">
+          SceneSage &mdash; Frame-Aware Trailer Recommender
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/ChinmayShanbhag/scene-sage" target="_blank" rel="noopener">GitHub</a>
+          <a href="#pipeline">Pipeline</a>
+          <a href="#tech">Stack</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    /* ─── NAV / SCROLL / REVEAL ─────────────────────── */
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 40);
+    });
+
+    document.getElementById('mobileToggle').addEventListener('click', () => {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) entry.target.classList.add('visible');
+        });
+      },
+      { threshold: 0.1, rootMargin: '0px 0px -50px 0px' }
+    );
+    document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+
+    document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+      anchor.addEventListener('click', (e) => {
+        const target = document.querySelector(anchor.getAttribute('href'));
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth' });
+          document.getElementById('navLinks').classList.remove('open');
+        }
+      });
+    });
+
+    /* ─── DEMO LOGIC ────────────────────────────────── */
+    const API = window.location.origin + '/api/search';
+    let pendingFile = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    /* tabs */
+    document.querySelectorAll('.input-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.input-tab').forEach((t) => t.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+        resetDemo();
+      });
+    });
+
+    /* drop zones */
+    function setupDropzone(zoneId, inputId, maxBytes, kind) {
+      const zone = $(zoneId);
+      const input = $(inputId);
+      zone.addEventListener('click', () => input.click());
+      zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+      zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+      zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0], maxBytes, kind);
+      });
+      input.addEventListener('change', () => {
+        if (input.files.length) handleFile(input.files[0], maxBytes, kind);
+        input.value = '';
+      });
+    }
+    setupDropzone('dropzone-image', 'file-image', 10 * 1024 * 1024, 'image');
+    setupDropzone('dropzone-video', 'file-video', 50 * 1024 * 1024, 'video');
+
+    function handleFile(file, maxBytes, kind) {
+      hideError();
+      hideResults();
+      if (file.size > maxBytes) {
+        showError(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Max: ${maxBytes / 1024 / 1024} MB.`);
+        return;
+      }
+      pendingFile = file;
+      const preview = $('file-preview');
+      const thumb = $('preview-thumb');
+      const vid = $('preview-video');
+      thumb.style.display = 'none';
+      vid.style.display = 'none';
+
+      if (kind === 'image') {
+        thumb.src = URL.createObjectURL(file);
+        thumb.style.display = 'block';
+      } else {
+        vid.src = URL.createObjectURL(file);
+        vid.style.display = 'block';
+      }
+      $('preview-name').textContent = file.name;
+      $('preview-meta').textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB · ${file.type || kind}`;
+      preview.classList.add('visible');
+    }
+
+    $('preview-remove').addEventListener('click', resetDemo);
+    $('preview-search').addEventListener('click', () => {
+      if (pendingFile) submitFile(pendingFile);
+    });
+
+    /* youtube submit */
+    $('yt-submit').addEventListener('click', submitYouTube);
+    $('yt-url').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitYouTube();
+    });
+
+    function submitYouTube() {
+      const url = $('yt-url').value.trim();
+      if (!url) return;
+      const ytRegex = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/;
+      if (!ytRegex.test(url)) {
+        showError('Please enter a valid YouTube URL (e.g. https://www.youtube.com/watch?v=...)');
+        return;
+      }
+      hideError();
+      hideResults();
+      showProcessing();
+
+      const form = new FormData();
+      form.append('youtube_url', url);
+      doSearch(form);
+    }
+
+    function submitFile(file) {
+      hideError();
+      hideResults();
+      showProcessing();
+
+      const form = new FormData();
+      form.append('file', file);
+      doSearch(form);
+    }
+
+    async function doSearch(formData) {
+      setStep('step-upload', 'done');
+      setStep('step-encode', 'active');
+
+      try {
+        let resp;
+        try {
+          resp = await fetch(API, { method: 'POST', body: formData });
+        } catch (networkErr) {
+          throw new Error(
+            'Cannot reach the backend server. Make sure you started it with: python web/server.py'
+          );
+        }
+
+        setStep('step-encode', 'done');
+        setStep('step-search', 'active');
+
+        if (!resp.ok) {
+          let detail = `Server error (${resp.status})`;
+          try {
+            const body = await resp.text();
+            const json = JSON.parse(body);
+            detail = json.detail || detail;
+          } catch (_) { /* non-JSON error body */ }
+          throw new Error(detail);
+        }
+
+        const data = await resp.json();
+        setStep('step-search', 'done');
+        setStep('step-rank', 'active');
+
+        await new Promise((r) => setTimeout(r, 300));
+        setStep('step-rank', 'done');
+
+        await new Promise((r) => setTimeout(r, 400));
+        hideProcessing();
+        renderResults(data);
+
+      } catch (err) {
+        hideProcessing();
+        showError(err.message || 'Something went wrong.');
+      }
+    }
+
+    function renderResults(data) {
+      const container = $('result-cards');
+      container.innerHTML = '';
+
+      if (!data.results || data.results.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:2rem;">No similar trailers found.</p>';
+        $('demo-results').classList.add('visible');
+        return;
+      }
+
+      data.results.forEach((r, i) => {
+        const card = document.createElement('div');
+        card.className = 'result-card';
+        card.innerHTML = `
+          <img class="result-card-thumb" src="${r.thumbnail}" alt="Trailer thumbnail"
+               onerror="this.style.background='var(--bg-card)';this.alt='Thumbnail unavailable'" loading="lazy" />
+          <div class="result-card-body">
+            <div class="result-card-rank">Match #${i + 1}</div>
+            <div class="result-card-scores">
+              <div class="result-card-score">
+                <span class="val">${r.top_cosine.toFixed(3)}</span>
+                <span class="lbl">Top Cosine</span>
+              </div>
+              <div class="result-card-score">
+                <span class="val">${r.mean_cosine.toFixed(3)}</span>
+                <span class="lbl">Mean Cosine</span>
+              </div>
+              <div class="result-card-score">
+                <span class="val">${r.votes}</span>
+                <span class="lbl">Frame Votes</span>
+              </div>
+            </div>
+            <a class="result-card-link" href="${r.youtube_url}" target="_blank" rel="noopener">
+              Watch on YouTube
+              <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </a>
+          </div>`;
+        container.appendChild(card);
+      });
+
+      $('results-meta').textContent =
+        `${data.query_frames} frame${data.query_frames !== 1 ? 's' : ''} queried · ${data.results.length} trailers returned`;
+
+      const metricsEl = $('results-metrics');
+      metricsEl.innerHTML = `
+        <div class="metric"><span class="metric-value">${(data.index_size || 0).toLocaleString()}</span><span class="metric-label">Indexed Vectors</span></div>
+        <div class="metric"><span class="metric-value">896</span><span class="metric-label">Dimensions</span></div>
+        <div class="metric"><span class="metric-value">${data.trailer_count || '—'}</span><span class="metric-label">Trailers in Index</span></div>
+        <div class="metric"><span class="metric-value">${data.query_frames}</span><span class="metric-label">Query Frames</span></div>`;
+
+      $('demo-results').classList.add('visible');
+      $('demo-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    /* UI helpers */
+    function showProcessing() { $('processing').classList.add('visible'); resetSteps(); }
+    function hideProcessing() { $('processing').classList.remove('visible'); }
+    function showError(msg) { const el = $('error-msg'); el.textContent = msg; el.classList.add('visible'); }
+    function hideError() { $('error-msg').classList.remove('visible'); }
+    function hideResults() { $('demo-results').classList.remove('visible'); }
+
+    function resetDemo() {
+      pendingFile = null;
+      $('file-preview').classList.remove('visible');
+      $('preview-thumb').style.display = 'none';
+      $('preview-video').style.display = 'none';
+      hideError();
+      hideProcessing();
+      hideResults();
+    }
+
+    function resetSteps() {
+      ['step-upload','step-encode','step-search','step-rank'].forEach((id) => {
+        const el = $(id);
+        el.className = 'check';
+      });
+    }
+
+    function setStep(id, state) {
+      const el = $(id);
+      el.className = 'check ' + state;
+    }
+  </script>
+</body>
+</html>
